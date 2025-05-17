@@ -1,49 +1,56 @@
-from flask import Flask, render_template, request, jsonify
+# app.py
+from flask import Flask, render_template, request, send_from_directory, jsonify
+import os
 import cv2
 import numpy as np
-import os
+from datetime import datetime
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 UPLOAD_FOLDER = 'static'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-image1_path = None
-image2_path = None
-
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    global image1_path, image2_path
-    if request.method == 'POST':
-        image1 = request.files['image1']
-        image2 = request.files['image2']
-
-        image1_path = os.path.join(UPLOAD_FOLDER, 'image1.jpg')
-        image2_path = os.path.join(UPLOAD_FOLDER, 'image2.jpg')
-
-        image1.save(image1_path)
-        image2.save(image2_path)
-
-        return render_template('index.html', uploaded=True)
-    return render_template('index.html', uploaded=False)
+    return render_template('index.html')
 
 @app.route('/blend', methods=['POST'])
 def blend():
-    global image1_path, image2_path
-    alpha = float(request.form['alpha'])
-    beta = float(request.form['beta'])
+    alpha = float(request.form.get('alpha', 0.5))
+    beta = float(request.form.get('beta', 0.5))
 
-    if not image1_path or not image2_path:
-        return jsonify({'error': 'Images not uploaded yet.'}), 400
+    img1_path = os.path.join(app.config['UPLOAD_FOLDER'], 'image1.jpg')
+    img2_path = os.path.join(app.config['UPLOAD_FOLDER'], 'image2.jpg')
 
-    img1 = cv2.imread(image1_path)
-    img2 = cv2.imread(image2_path)
+    if not os.path.exists(img1_path) or not os.path.exists(img2_path):
+        return jsonify({'error': 'Both images must be uploaded first.'}), 400
+
+    img1 = cv2.imread(img1_path)
+    img2 = cv2.imread(img2_path)
+
     img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
-
     blended = cv2.addWeighted(img1, alpha, img2, beta, 0)
-    blended_path = os.path.join(UPLOAD_FOLDER, 'blended.jpg')
-    cv2.imwrite(blended_path, blended)
 
-    return jsonify({'blended_url': blended_path})
+    output_filename = 'blended.jpg'
+    output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
+    cv2.imwrite(output_path, blended)
+
+    return jsonify({"url": f"/static/{output_filename}?t={datetime.now().timestamp()}"})
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    for i in [1, 2]:
+        file = request.files.get(f'image{i}')
+        if file:
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], f'image{i}.jpg')
+            file.save(filepath)
+    return ('', 204)
+
+@app.route('/download')
+def download():
+    path = os.path.join(app.config['UPLOAD_FOLDER'], 'blended.jpg')
+    if os.path.exists(path):
+        return send_from_directory(directory=app.config['UPLOAD_FOLDER'], path='blended.jpg', as_attachment=True)
+    return 'No image to download', 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',debug=True)
+    app.run(debug=False, host='0.0.0.0', port=5000)
